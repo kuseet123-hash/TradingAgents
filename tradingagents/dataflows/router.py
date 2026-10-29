@@ -7,7 +7,7 @@ from tradingagents.dataflows.errors import (
     VendorNotConfiguredError,
     VendorUnavailableError,
 )
-from tradingagents.dataflows.vendors import eastmoney
+from tradingagents.dataflows.vendors import eastmoney, tencent
 from tradingagents.dataflows.vendors.alpha_vantage import (
     get_balance_sheet as get_alpha_vantage_balance_sheet,
     get_cashflow as get_alpha_vantage_cashflow,
@@ -101,17 +101,20 @@ VENDOR_METHODS = {
     # core_stock_apis
     "get_stock_data": {
         "eastmoney": eastmoney.get_stock_data,
+        "tencent": tencent.get_stock_data,
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
     },
     # technical_indicators
     "get_indicators": {
         "eastmoney": eastmoney.get_indicators,
+        "tencent": tencent.get_indicators,
         "alpha_vantage": get_alpha_vantage_indicator,
         "yfinance": get_stock_stats_indicators_window,
     },
     "get_verified_market_snapshot": {
         "eastmoney": eastmoney.build_verified_market_snapshot,
+        "tencent": tencent.build_verified_market_snapshot,
     },
     # fundamental_data
     "get_fundamentals": {
@@ -229,6 +232,14 @@ def route_to_vendor(method: str, *args, **kwargs):
         # Explicit mode is a closed domestic chain. A source failure cannot
         # silently turn into SEC filings, a Yahoo snapshot, or US social data.
         vendor_config = "eastmoney"
+        if method in {"get_stock_data", "get_indicators", "get_verified_market_snapshot"}:
+            selected = get_config().get("ashare_price_vendor", "eastmoney")
+            if not isinstance(selected, str) or selected not in {"eastmoney", "tencent"}:
+                return (
+                    "DATA_UNAVAILABLE: ashare_price_vendor must be eastmoney or tencent; "
+                    "no automatic vendor fallback."
+                )
+            vendor_config = selected
     primary_vendors = [v.strip() for v in vendor_config.split(',')]
 
     if method not in VENDOR_METHODS:
@@ -251,7 +262,7 @@ def route_to_vendor(method: str, *args, **kwargs):
             )
     else:
         # A domestic feed is never an implicit new fallback for other markets.
-        vendor_chain = [v for v in all_available_vendors if v != "eastmoney"]
+        vendor_chain = [v for v in all_available_vendors if v not in {"eastmoney", "tencent"}]
 
     last_no_data: NoMarketDataError | None = None
     last_unavailable: VendorUnavailableError | None = None

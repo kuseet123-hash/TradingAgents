@@ -10,38 +10,29 @@ from __future__ import annotations
 import re
 from datetime import datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
-from functools import lru_cache
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
-from exchange_calendars.exchange_calendar_xshg import XSHGExchangeCalendar
-from stockstats import wrap
 
+from tradingagents.dataflows.ashare_market import (
+    SHANGHAI,
+    anonymous_auth,
+    completed_window,
+    finish_bars,
+    number as _number,
+    price_header as _price_header,
+    render_indicators,
+    render_snapshot,
+    sessions_between as _sessions,  # noqa: F401 - backwards-compatible private helper
+)
 from tradingagents.dataflows.ashares import parse_ashare_symbol
 from tradingagents.dataflows.errors import NoMarketDataError, VendorUnavailableError
 
-SHANGHAI = ZoneInfo("Asia/Shanghai")
 PRICE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 ANNOUNCEMENT_URL = "https://np-anotice-stock.eastmoney.com/api/security/ann"
 MAX_PRICE_DAYS = 3660
 MAX_ANNOUNCEMENT_PAGES = 3
 PAGE_SIZE = 100
-INDICATORS = {
-    "close_10_ema": 10,
-    "close_50_sma": 50,
-    "close_200_sma": 200,
-    "macd": 35,
-    "macds": 35,
-    "macdh": 35,
-    "rsi": 15,
-    "boll": 20,
-    "boll_ub": 20,
-    "boll_lb": 20,
-    "atr": 15,
-    "vwma": 10,
-    "mfi": 15,
-}
 
 
 def _now() -> datetime:
@@ -68,6 +59,7 @@ def _get_json(url: str, params: dict) -> dict:
             params=params,
             timeout=15,
             headers={"User-Agent": "TradingAgents-Ashare/1.0 (read-only research)"},
+            auth=anonymous_auth,
             allow_redirects=False,
         )
         if response.status_code != 200:
@@ -82,34 +74,6 @@ def _get_json(url: str, params: dict) -> dict:
     return payload
 
 
-@lru_cache(maxsize=1)
-def _calendar():
-    # Finite published holiday coverage: never guess weekdays beyond its bound.
-    return XSHGExchangeCalendar(
-        start=XSHGExchangeCalendar.bound_min(), end=XSHGExchangeCalendar.bound_max()
-    )
-
-
-def _sessions(start, end) -> set:
-    calendar = _calendar()
-    if start < calendar.first_session.date() or end > calendar.last_session.date():
-        raise VendorUnavailableError(
-            f"A-share calendar unavailable outside {calendar.first_session.date()}.."
-            f"{calendar.last_session.date()}; update exchange-calendars"
-        )
-    return set(calendar.sessions_in_range(str(start), str(end)).date)
-
-
-def _number(value: str) -> float:
-    result = Decimal(value)
-    if not result.is_finite() or result < 0:
-        raise ValueError("non-finite or negative market value")
-    converted = float(result)
-    if not pd.notna(converted) or converted == float("inf"):
-        raise ValueError("market value out of range")
-    return converted
-
-
 def load_daily_bars(
     symbol: str, start_date: str, end_date: str, *, adjustment: str = "none"
 ) -> pd.DataFrame:
@@ -119,16 +83,9 @@ def load_daily_bars(
     flag. A missing last expected session is unavailable (possibly suspended),
     never filled with an earlier close. SH and SZ share the regular calendar.
     """
-    stock = parse_ashare_symbol(symbol)
-    if adjustment != "none":
-        raise ValueError("Only adjustment='none' is supported; qfq/hfq have no as-of vintage")
-    start, end = _window(start_date, end_date)
-    if (end - start).days > MAX_PRICE_DAYS:
-        raise ValueError(f"A-share price window exceeds {MAX_PRICE_DAYS} days")
-    final_end = min(end, _now().date() - timedelta(days=1))
-    sessions = _sessions(start, final_end) if start <= final_end else set()
-    if not sessions:
-        raise NoMarketDataError(symbol, stock.canonical, "no completed sessions in window")
+    stock, start, final_end, sessions = completed_window(
+        symbol, start_date, end_date, adjustment, _now(), max_days=MAX_PRICE_DAYS
+    )
     payload = _get_json(
         PRICE_URL,
         {
@@ -175,39 +132,14 @@ def load_daily_bars(
             rows.append([pd.Timestamp(day), open_, high, low, close, shares, amount, lots])
     except (ValueError, TypeError, AttributeError, InvalidOperation) as exc:
         raise VendorUnavailableError("Eastmoney malformed daily row; values withheld") from exc
-    if not rows:
-        raise NoMarketDataError(symbol, stock.canonical, "no usable completed daily rows")
-    frame = (
-        pd.DataFrame(
-            rows, columns=["Date", "Open", "High", "Low", "Close", "Volume", "Amount", "VolumeLots"]
-        )
-        .sort_values("Date")
-        .reset_index(drop=True)
-    )
-    if frame.iloc[-1]["Date"].date() != max(sessions):
-        raise NoMarketDataError(
-            symbol,
-            stock.canonical,
-            f"latest row {frame.iloc[-1]['Date'].date()} is before expected session "
-            f"{max(sessions)}; suspension/coverage unknown, no forward fill",
-        )
-    frame.attrs.update(
+    return finish_bars(
+        symbol,
+        rows,
+        ["Date", "Open", "High", "Low", "Close", "Volume", "Amount", "VolumeLots"],
+        sessions,
         source="Eastmoney public daily feed",
-        adjustment="none",
-        timezone="Asia/Shanghai",
         retrieved_at=_now().isoformat(),
-    )
-    return frame
-
-
-def _price_header(symbol: str, frame: pd.DataFrame) -> str:
-    return (
-        f"# A-share {parse_ashare_symbol(symbol).canonical}; source: Eastmoney public daily feed\n"
-        f"# Retrieved: {frame.attrs['retrieved_at']}; timezone: Asia/Shanghai; adjustment: none\n"
-        "# OHLC: CNY yuan/share; Volume: shares = VolumeLots * 100; Amount: CNY yuan (not 万元)\n"
-        "# Prior completed sessions only; today's provisional row is withheld even after close.\n"
-        "# Missing rows are not filled; source corrections may change history; no archived vintage.\n"
-        "# Unadjusted price gaps from corporate actions are not investment returns.\n"
+        source_units="volume lots; amount yuan",
     )
 
 
@@ -216,47 +148,12 @@ def get_stock_data(symbol: str, start_date: str, end_date: str) -> str:
     return _price_header(symbol, frame) + frame.to_csv(index=False)
 
 
-def _indicator_frame(symbol: str, as_of_date: str):
-    end = _date(as_of_date)
-    return load_daily_bars(symbol, str(end - timedelta(days=730)), str(end))
-
-
-def _indicator_value(frame, indicator: str, position: int) -> str:
-    if indicator not in INDICATORS:
-        raise ValueError(f"Unsupported A-share indicator: {indicator}")
-    if position + 1 < INDICATORS[indicator]:
-        return "N/A: insufficient trading rows for warmup"
-    series = wrap(frame.copy())[indicator]
-    value = series.iloc[position]
-    return f"{value:.8g}" if pd.notna(value) and abs(value) != float("inf") else "N/A"
-
-
 def get_indicators(symbol: str, indicator: str, as_of_date: str, look_back_days: int) -> str:
-    if not isinstance(look_back_days, int) or not 0 <= look_back_days <= 365:
-        raise ValueError("A-share look_back_days must be in 0..365")
-    frame = _indicator_frame(symbol, as_of_date)
-    start = pd.Timestamp(_date(as_of_date) - timedelta(days=look_back_days))
-    lines = [_price_header(symbol, frame), f"# Indicator: {indicator}; only observed trading rows"]
-    for position, row in frame.iterrows():
-        if row["Date"] >= start:
-            lines.append(f"{row['Date']:%Y-%m-%d}: {_indicator_value(frame, indicator, position)}")
-    return "\n".join(lines)
+    return render_indicators(symbol, indicator, as_of_date, look_back_days, load_daily_bars)
 
 
 def build_verified_market_snapshot(symbol: str, as_of_date: str, look_back_days: int = 30) -> str:
-    frame = _indicator_frame(symbol, as_of_date)
-    latest = frame.iloc[-1]
-    lines = [
-        _price_header(symbol, frame),
-        f"## Verified market data snapshot as of {as_of_date}",
-        f"Latest trading row used: {latest['Date']:%Y-%m-%d}",
-        frame.tail(max(1, min(int(look_back_days), 30))).to_csv(index=False),
-        "| Indicator | Value |",
-        "|---|---:|",
-    ]
-    for indicator in INDICATORS:
-        lines.append(f"| {indicator} | {_indicator_value(frame, indicator, len(frame) - 1)} |")
-    return "\n".join(lines)
+    return render_snapshot(symbol, as_of_date, look_back_days, load_daily_bars)
 
 
 def _publication_time(value):
