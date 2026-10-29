@@ -22,6 +22,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MAX_TOOL_ROUNDS":      "max_tool_rounds",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "TRADINGAGENTS_ASHARE_DATA_ENABLED":  "ashare_data_enabled",
+    "TRADINGAGENTS_ASHARE_PRICE_VENDOR":  "ashare_price_vendor",
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
     "TRADINGAGENTS_TEMPERATURE":          "temperature",
     "TRADINGAGENTS_LLM_MAX_RETRIES":      "llm_max_retries",
@@ -155,6 +156,9 @@ def build_default_config() -> dict:
         # Opt-in SH/SZ read-only mode: pins mainland tools to Eastmoney, including
         # the verified snapshot, and withholds unsupported sources/return scoring.
         "ashare_data_enabled": False,
+        # One explicit domestic price source for prices, indicators and snapshot.
+        # Announcements stay on Eastmoney; no automatic cross-vendor fallback.
+        "ashare_price_vendor": "eastmoney",  # eastmoney or tencent
         # Category-level configuration (default for all tools in category).
         # The configured value is the exact vendor chain — requests are NOT silently
         # routed to vendors you didn't choose. For ordered fallback, list several,
