@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
+from tradingagents.dataflows.ashares import use_ashare_data
+from tradingagents.dataflows.errors import VendorUnavailableError
 from tradingagents.dataflows.symbols import normalize_symbol
 from tradingagents.dataflows.vendors.yahoo.market import get_closes
 
@@ -74,6 +76,11 @@ def fetch_returns(
     yet (#1169). A failure to get or read the prices is raised, for the caller
     to report.
     """
+    if use_ashare_data(ticker):
+        raise VendorUnavailableError(
+            "A-share phase 1 return scoring unavailable: corporate-action-adjusted "
+            "stock and benchmark history is not implemented; no Yahoo fallback"
+        )
     start = datetime.strptime(trade_date, "%Y-%m-%d")
     today = _now().tz_localize(None).normalize()
     # The entry and holding_days more sessions all close after the decision date

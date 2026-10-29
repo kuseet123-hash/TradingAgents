@@ -21,6 +21,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
     "TRADINGAGENTS_MAX_TOOL_ROUNDS":      "max_tool_rounds",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
+    "TRADINGAGENTS_ASHARE_DATA_ENABLED":  "ashare_data_enabled",
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
     "TRADINGAGENTS_TEMPERATURE":          "temperature",
     "TRADINGAGENTS_LLM_MAX_RETRIES":      "llm_max_retries",
@@ -151,6 +152,9 @@ def build_default_config() -> dict:
             "oil commodities supply chain energy",
         ],
         # Data vendor configuration
+        # Opt-in SH/SZ read-only mode: pins mainland tools to Eastmoney, including
+        # the verified snapshot, and withholds unsupported sources/return scoring.
+        "ashare_data_enabled": False,
         # Category-level configuration (default for all tools in category).
         # The configured value is the exact vendor chain — requests are NOT silently
         # routed to vendors you didn't choose. For ordered fallback, list several,

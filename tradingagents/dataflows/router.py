@@ -1,11 +1,13 @@
 import logging
 
+from tradingagents.dataflows.ashares import parse_ashare_symbol, use_ashare_data
 from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.errors import (
     NoMarketDataError,
     VendorNotConfiguredError,
     VendorUnavailableError,
 )
+from tradingagents.dataflows.vendors import eastmoney
 from tradingagents.dataflows.vendors.alpha_vantage import (
     get_balance_sheet as get_alpha_vantage_balance_sheet,
     get_cashflow as get_alpha_vantage_cashflow,
@@ -52,7 +54,8 @@ TOOLS_CATEGORIES = {
     "technical_indicators": {
         "description": "Technical analysis indicators",
         "tools": [
-            "get_indicators"
+            "get_indicators",
+            "get_verified_market_snapshot",
         ]
     },
     "fundamental_data": {
@@ -97,36 +100,46 @@ OPTIONAL_CATEGORIES = {"macro_data", "prediction_markets"}
 VENDOR_METHODS = {
     # core_stock_apis
     "get_stock_data": {
+        "eastmoney": eastmoney.get_stock_data,
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
     },
     # technical_indicators
     "get_indicators": {
+        "eastmoney": eastmoney.get_indicators,
         "alpha_vantage": get_alpha_vantage_indicator,
         "yfinance": get_stock_stats_indicators_window,
     },
+    "get_verified_market_snapshot": {
+        "eastmoney": eastmoney.build_verified_market_snapshot,
+    },
     # fundamental_data
     "get_fundamentals": {
+        "eastmoney": eastmoney.get_fundamentals,
         "alpha_vantage": get_alpha_vantage_fundamentals,
         "yfinance": get_yfinance_fundamentals,
     },
     "get_balance_sheet": {
+        "eastmoney": eastmoney.get_balance_sheet,
         "alpha_vantage": get_alpha_vantage_balance_sheet,
         "sec_edgar": get_sec_edgar_balance_sheet,
         "yfinance": get_yfinance_balance_sheet,
     },
     "get_cashflow": {
+        "eastmoney": eastmoney.get_cashflow,
         "alpha_vantage": get_alpha_vantage_cashflow,
         "sec_edgar": get_sec_edgar_cashflow,
         "yfinance": get_yfinance_cashflow,
     },
     "get_income_statement": {
+        "eastmoney": eastmoney.get_income_statement,
         "alpha_vantage": get_alpha_vantage_income_statement,
         "sec_edgar": get_sec_edgar_income_statement,
         "yfinance": get_yfinance_income_statement,
     },
     # news_data
     "get_news": {
+        "eastmoney": eastmoney.get_news,
         "alpha_vantage": get_alpha_vantage_news,
         "yfinance": get_news_yfinance,
     },
@@ -135,6 +148,7 @@ VENDOR_METHODS = {
         "alpha_vantage": get_alpha_vantage_global_news,
     },
     "get_insider_transactions": {
+        "eastmoney": eastmoney.get_insider_transactions,
         "alpha_vantage": get_alpha_vantage_insider_transactions,
         "yfinance": get_yfinance_insider_transactions,
     },
@@ -201,6 +215,20 @@ def route_to_vendor(method: str, *args, **kwargs):
     """Route method calls to appropriate vendor implementation with fallback support."""
     category = get_category_for_method(method)
     vendor_config = get_vendor(category, method)
+    if use_ashare_data() and method in {
+        "get_global_news", "get_macro_indicators", "get_prediction_markets"
+    }:
+        return eastmoney.unavailable(f"domestic {method}")
+    symbol = args[0] if args else kwargs.get("symbol", kwargs.get("ticker"))
+    mainland = use_ashare_data(symbol) if symbol is not None else False
+    if mainland:
+        try:
+            parse_ashare_symbol(symbol)
+        except ValueError as exc:
+            return f"DATA_UNAVAILABLE: {exc}; no foreign-vendor fallback in A-share mode."
+        # Explicit mode is a closed domestic chain. A source failure cannot
+        # silently turn into SEC filings, a Yahoo snapshot, or US social data.
+        vendor_config = "eastmoney"
     primary_vendors = [v.strip() for v in vendor_config.split(',')]
 
     if method not in VENDOR_METHODS:
@@ -222,7 +250,8 @@ def route_to_vendor(method: str, *args, **kwargs):
                 f"Available: {all_available_vendors}."
             )
     else:
-        vendor_chain = all_available_vendors
+        # A domestic feed is never an implicit new fallback for other markets.
+        vendor_chain = [v for v in all_available_vendors if v != "eastmoney"]
 
     last_no_data: NoMarketDataError | None = None
     last_unavailable: VendorUnavailableError | None = None

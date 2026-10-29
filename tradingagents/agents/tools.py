@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
+from tradingagents.dataflows.ashares import use_ashare_data
 from tradingagents.dataflows.date_window import as_of, as_of_window
 from tradingagents.dataflows.errors import NoMarketDataError, VendorUnavailableError
 from tradingagents.dataflows.router import no_data_available, route_to_vendor, vendor_unavailable
@@ -87,6 +88,10 @@ def get_verified_market_snapshot(
     """
     # An exception out of a tool would end the run.
     try:
+        if use_ashare_data(symbol):
+            return route_to_vendor(
+                "get_verified_market_snapshot", symbol, as_of(curr_date, trade_date), look_back_days
+            )
         return build_verified_market_snapshot(symbol, as_of(curr_date, trade_date), look_back_days)
     except VendorUnavailableError as exc:
         return vendor_unavailable("get_verified_market_snapshot", exc)

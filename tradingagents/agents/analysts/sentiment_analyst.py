@@ -31,6 +31,8 @@ from tradingagents.agents.structured import (
     invoke_structured_or_freetext,
 )
 from tradingagents.agents.tools import get_news
+from tradingagents.dataflows.ashares import use_ashare_data
+from tradingagents.dataflows.vendors.eastmoney import unavailable
 from tradingagents.dataflows.vendors.reddit import (
     CRYPTO_SUBREDDITS,
     DEFAULT_SUBREDDITS,
@@ -56,6 +58,9 @@ def create_sentiment_analyst(llm):
 
     def sentiment_analyst_node(state):
         ticker = state["company_of_interest"]
+        if use_ashare_data(ticker):
+            report = unavailable("domestic social sentiment (no StockTwits/Reddit substitution)")
+            return {"messages": [AIMessage(content=report)], "sentiment_report": report}
         end_date = state["trade_date"]
         start_date = _seven_days_back(end_date)
         instrument_context = get_instrument_context_from_state(state)

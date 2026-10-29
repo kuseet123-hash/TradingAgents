@@ -5,6 +5,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
+from tradingagents.dataflows.ashares import parse_ashare_symbol, use_ashare_data
 from tradingagents.dataflows.date_window import is_historical
 from tradingagents.dataflows.vendors.yahoo.fundamentals import get_company_profile
 
@@ -75,6 +76,10 @@ def resolve_instrument_identity(ticker: str) -> dict:
     Identity resolves for the same instrument the price path fetches
     (``XAUUSD`` -> ``GC=F``, #983).
     """
+    if use_ashare_data(ticker):
+        # Do not query a present-day foreign profile for a historical SH/SZ run.
+        stock = parse_ashare_symbol(ticker)
+        return {"exchange": stock.exchange, "quote_type": "EQUITY"}
     try:
         return _identity(ticker)
     except Exception as exc:  # noqa: BLE001 — fail open, never block the run
@@ -130,6 +135,16 @@ def build_instrument_context(
         "The tools serve this instrument; refer to it by this exact ticker in every report and recommendation, "
         "preserving any exchange suffix (e.g. `.TO`, `.L`, `.HK`, `.T`, `-USD`)."
     )
+    if use_ashare_data(ticker):
+        context += (
+            " A-share phase 1: prices are unadjusted CNY per share, volume is shares,"
+            " amount is CNY yuan, dates use Asia/Shanghai. Today's daily row is withheld."
+            " Fundamentals are a disclosure index only, not numeric financial statements."
+            " Domestic social sentiment, broad news, macro feeds, institutional accounts,"
+            " fund flows and Dragon-Tiger lists are unavailable. Missing evidence does"
+            " not mean neutral sentiment or no risk. Company names/sectors are not inferred."
+            " Corporate-action-adjusted return scoring is unavailable. This is read-only research."
+        )
 
     identity = identity or {}
     name = identity.get("company_name") or identity.get("name")

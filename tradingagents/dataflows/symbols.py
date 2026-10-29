@@ -25,6 +25,8 @@ from __future__ import annotations
 import logging
 import re
 
+from tradingagents.dataflows.ashares import parse_ashare_symbol
+
 logger = logging.getLogger(__name__)
 
 
@@ -126,10 +128,16 @@ def normalize_symbol(raw: str) -> str:
     s = s.rstrip("+")
 
     crypto = _normalize_crypto(s)
+    try:
+        ashare = parse_ashare_symbol(s).canonical
+    except ValueError:
+        ashare = None
     if s in _ALIASES:
         canonical = _ALIASES[s]
     elif crypto is not None:
         canonical = crypto
+    elif ashare is not None:
+        canonical = ashare
     elif len(s) == 6 and s[:3] in _FOREX_CURRENCIES and s[3:] in _FOREX_CURRENCIES:
         canonical = f"{s}=X"
     elif hk := _HK_CODE.match(s):
