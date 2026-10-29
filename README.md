@@ -406,6 +406,8 @@ Backtest results are not guaranteed to match any published figure. Returns depen
 
 ## Contributing
 
+China A-share phase-1 domestic read-only adapter (opt-in): see the [中文使用说明、来源与限制](docs/ASHARE_ZH.md). It serves unadjusted completed-session daily bars and a disclosure index; numeric financial statements and domestic social sentiment are not yet implemented.
+
 Contributions are welcome: bug fixes, documentation, and feature ideas; past contributions are credited per release in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Citation
